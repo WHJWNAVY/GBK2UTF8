@@ -3,151 +3,199 @@
  * Licensed under the MIT License. See the LICENSE file for the full text.
  */
 
+#include <ctype.h>
 #include <errno.h>
+#include <limits.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-
 #include <string.h>
 #include <unistd.h>
-#include <fcntl.h>
-
-#include <stdint.h>
-#include <inttypes.h>
-#include <sys/mman.h>
-
-
 
 #include "log.h"
-#include "tab_gbk2uni.h"
+#include "gbk2uni.h"
 
+int32_t read_file_to_buff(const char *file, uint8_t **fbuff, uint32_t *pflen) {
+    int ret = 0;
+    FILE *fp = NULL;
+    uint8_t *pbuff = NULL;
+    uint32_t fsize = 0;
+    uint32_t rsize = 0;
 
-/*
- * Determine the current offset and remaining length of the open file.
- */
-static int get_file_start_and_length(int fd, off_t *start_, size_t *length_)
-{
-    off_t start, end;
-    size_t length;
-
-    //assert(start_ != NULL);
-    //assert(length_ != NULL);
-
-    start = lseek(fd, 0L, SEEK_CUR);
-    end = lseek(fd, 0L, SEEK_END);
-    (void) lseek(fd, start, SEEK_SET);
-
-    if (start == (off_t) -1 || end == (off_t) -1) {
-        LOGE("could not determine length of file\n");
-        return -1;
+    if ((file == NULL) || (fbuff == NULL) || (pflen == NULL)) {
+        LOGE("Invalid file name!");
+        ret = -1;
+        goto err;
     }
 
-    length = end - start;
-    if (length == 0) {
-        LOGE("file is empty\n");
-        return -1;
+    fp = fopen(file, "rb");
+    if (fp == NULL) {
+        LOGE("Failed to open file [%s]", file);
+        ret = -1;
+        goto err;
     }
 
+    fseek(fp, 0, SEEK_END);
+    fsize = ftell(fp);
+    if (fsize <= 0) {
+        LOGE("Invalid file size [%u]!", fsize);
+        ret = fsize;
+        goto err;
+    }
+    fseek(fp, 0, SEEK_SET);
 
-    if (start_) {
-          *start_ = start;
+    pbuff = malloc(fsize);
+    if (pbuff == NULL) {
+        LOGE("Failed to malloc size [%u]!", fsize);
+        ret = fsize;
+        goto err;
+    }
+    memset(pbuff, 0, fsize);
+
+    while ((rsize = fread(pbuff, 1, fsize, fp)) <= 0) {
+        if (errno == EINTR || errno == EAGAIN) {
+            errno = 0;
+            continue;
+        }
+        break;
     }
 
-    if (length_) {
-      *length_ = length;
+    if (rsize != fsize) {
+        LOGE("Failed to read file to buffer, size [%u:%u]!", rsize, fsize);
+        ret = rsize;
+        goto err;
     }
 
-    return 0;
+    LOGD("Read file [%s] to addr [%p] size [%u]", file, pbuff, fsize);
+
+    *fbuff = pbuff;
+    *pflen = fsize;
+    ret = 0;
+err:
+    if (fp != NULL) {
+        fclose(fp);
+    }
+    if ((ret != 0) && (pbuff != NULL)) {
+        free(pbuff);
+    }
+    return ret;
 }
 
+int32_t write_buff_to_file(uint8_t *fbuff, uint32_t flen, const char *file) {
+    int ret = 0;
+    uint32_t wlen = 0;
+    FILE *fp = NULL;
 
-int main(int argc, char *argv[])
-{
+    if ((file == NULL) || (fbuff == NULL) || (flen <= 0)) {
+        LOGE("Invalid file name!");
+        ret = -1;
+        goto err;
+    }
 
-	int ret = -1, err, rv;
-	int fd = -1;
-	char *filename = NULL;
+    fp = fopen(file, "wb");
+    if (fp == NULL) {
+        LOGE("Failed to open file [%s]", file);
+        ret = -1;
+        goto err;
+    }
 
-  	void* mem_ptr = MAP_FAILED;
-	size_t mem_size = 0;
-	char *tmp_ptr = NULL;
+    wlen = fwrite(fbuff, 1, flen, fp);
+    if (wlen != flen) {
+        LOGE("Failed to write buffer to file, size [%u:%u]!", wlen, flen);
+        ret = -wlen;
+        goto err;
+    }
 
-	LOGD("argc = [%d]\n", argc);
-	if (argc < 2 || NULL == argv[1] || strlen(argv[1]) <= 0) {
-		LOGE("input param error!!!(It can not find filename.)\n");
-		goto __oops;
-	}
-	
-	filename = argv[1];
-	fd = open(filename, O_RDONLY);
-  	if (fd < 0) {
-    		err = errno ? errno : -1;
-    		LOGE("Unable to open '%s': %s\n", filename, strerror(err));
-    		goto __oops;
-  	}
+    LOGD("Write buffer [%p] size [%u] to file [%s]", fbuff, flen, file);
+    ret = 0;
+err:
+    if (fp != NULL) {
+        fclose(fp);
+    }
+    return ret;
+}
 
-	ret = get_file_start_and_length(fd, NULL, &mem_size);
-	if (ret) {
-    		LOGE("get_file_start_and_length error!\n");
-    		goto __oops;
-	}
-	if (mem_size <= 0) {
-    		LOGE("file(%s) length is 0!\n", filename);
-    		goto __oops;
-	}
+static void usage(const char *exe_name) {
+    printf("Usage: %s <INPUT_FILE> [OUTPUT_FILE]\n", exe_name);
+}
+int main(int argc, char *argv[]) {
+    int32_t ret = 0;
+    char *in_file = NULL;
+    char *out_file = NULL;
+    uint8_t *in_buff = NULL;
+    uint8_t *out_buff = NULL;
+    uint32_t in_len = 0;
+    uint32_t out_len = 0;
 
-  	LOGD("filename = [%d][%s][%zu]\n", fd, filename, mem_size);
+    if ((argc < 2) || (NULL == argv[1]) || (strlen(argv[1]) <= 0)) {
+        LOGE("Invalid input filename!");
+        ret = 1;
+        goto __oops;
+    }
+    in_file = argv[1];
+    LOGD("Input file[%s]", in_file);
 
-  	mem_ptr = mmap(NULL, mem_size, PROT_READ, MAP_FILE | MAP_PRIVATE, fd, 0);
-  	if (mem_ptr == MAP_FAILED) {
-    		err = errno ? errno : -1;
-		LOGE("unable to mmap: %s\n", strerror(errno));
-    		goto __oops;
-  	}
-	
-	
-	rv = is_valid_utf8((const unsigned char*)mem_ptr, strlen((char*)mem_ptr));
-	LOGD("is_valid_utf8 = [%d]\n", rv);
-	if (0 != rv) {
-		if (0 != is_valid_gbk((const unsigned char*)mem_ptr, strlen((char*)mem_ptr))) {
-            //既是utf-8又是gbk,按gbk处理
-			rv = 0;	
-		}
-	}
+    if ((argc > 2) && (NULL != argv[2]) && (strlen(argv[2]) > 0)) {
+        out_file = argv[2];
+    }
 
-	if (rv) {
-		LOGD("mem_ptr = [%zu][%s]\n", strlen(mem_ptr), mem_ptr);
-	} else {
-		err = 0;
-		tmp_ptr = gbk2utf8(mem_ptr, mem_size, &err);
-		if (NULL == tmp_ptr) {
-			LOGE("tmp_ptr = [%d][0][NULL]\n", err);
-			//LOGD("mem_ptr's encoding is unknow! \n");
-		} else {
-			LOGD("tmp_ptr = [%d][%zu][%s]\n", err, strlen(tmp_ptr), tmp_ptr);
-		}
-	}
+    LOGD("Output file[%s]", ((out_file != NULL) ? out_file : "stdout"));
 
-	
+    ret = read_file_to_buff(in_file, &in_buff, &in_len);
+    if (ret != 0) {
+        LOGE("Failed to read file [%s]!", in_file);
+        goto __oops;
+    }
+    LOGD("Input buff[%p], len[%u]", in_buff, in_len);
+    if (is_valid_gbkns(in_buff, in_len)) {
+        LOGD("Is valid gbk string!");
+        out_buff = gbk2utf8(in_buff, in_len);
+    } else if (is_valid_utf8ns(in_buff, in_len)) {
+        LOGD("Is valid utf8 string!");
+        out_buff = strdup(in_buff);
+    } else if (is_printns(in_buff, in_len)) {
+        LOGD("Is ascii string!");
+        out_buff = strdup(in_buff);
+    } else {
+        LOGE("Unknow encode!");
+        ret = -1;
+        goto __oops;
+    }
 
+    if (out_buff == NULL) {
+        LOGE("Failed to decode gbk string!");
+        ret = -1;
+        goto __oops;
+    }
+    out_len = strlen(out_buff);
+    LOGD("output buff[%p], len[%u]", out_buff, out_len);
+
+    if (out_file != NULL) {
+        LOGD("Write buff to file [%s]!", out_file);
+        ret = write_buff_to_file(out_buff, out_len, out_file);
+        if (ret != 0) {
+            LOGE("Failed to write buff to file [%s]!", out_file);
+            goto __oops;
+        }
+    } else {
+        LOGD("Write buff to stdout:");
+        printf("%s\n", out_buff);
+    }
+
+    ret = 0;
 __oops:
-	
-	if (tmp_ptr) {
-		free(tmp_ptr);
-		tmp_ptr = NULL;
-	}
+    if (ret > 0) {
+        usage(argv[0]);
+    }
 
-  	if (mem_ptr != MAP_FAILED && mem_size > 0) {
-		munmap(mem_ptr, mem_size);	
-		mem_ptr = MAP_FAILED;
-		mem_size = 0;
-	}
+    if (out_buff != NULL) {
+        free(out_buff);
+    }
 
-	if (fd >= 0) {
-		close(fd);
-		fd = -1;
-	}
-	
-	return 0;
+    if (in_buff != NULL) {
+        free(in_buff);
+    }
+
+    return ret;
 }
-
-

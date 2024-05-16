@@ -1,15 +1,15 @@
-/*
- * Copyright (c) 2020 Louis Suen
- * Licensed under the MIT License. See the LICENSE file for the full text.
- */
-#ifndef __LOG__H__D76B1C4F_4C55_4497_AA37_CE482DC90E19
-#define __LOG__H__D76B1C4F_4C55_4497_AA37_CE482DC90E19
+#ifndef __LOG_H__
+#define __LOG_H__
 
 #include <stdio.h>
 
-#define LOGD(format, ...) fprintf(stdout, format, ##__VA_ARGS__)
-#define LOGW(format, ...) fprintf(stdout, format, ##__VA_ARGS__)
-#define LOGE(format, ...) fprintf(stderr, format, ##__VA_ARGS__)
+#define LOG(LEVEL, FMT, ...)                                                     \
+    do {                                                                         \
+        fprintf(stderr, "(%s:%d) " FMT "\n", __func__, __LINE__, ##__VA_ARGS__); \
+    } while (0)
+
+#define LOGD(FMT, ...) LOG(LOG_DEBUG, FMT, ##__VA_ARGS__)
+#define LOGW(FMT, ...) LOG(LOG_WARNING, FMT, ##__VA_ARGS__)
+#define LOGE(FMT, ...) LOG(LOG_ERR, FMT, ##__VA_ARGS__)
 
 #endif
-
