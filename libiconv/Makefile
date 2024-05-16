@@ -1,13 +1,12 @@
 src_dir=$(pwd)
-TARGET:=gbk2utf8
-OBJECTS:=main.o gbk2uni.o
-CFLAGS:=-Os
-# CFLAGS+=-Wall
-# LDFLAGS:=
+TARGET:=gen_gbk2uni_tab
+OBJECTS:=gen_gbk2uni_tab.o
+CFLAGS:=-Wall -Os
+LDFLAGS:=
 CC:=gcc
 
 $(TARGET):$(OBJECTS)
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(LDFLAGS) $^ $(LIBS) -o $@
 
 all:$(TARGET)
 
