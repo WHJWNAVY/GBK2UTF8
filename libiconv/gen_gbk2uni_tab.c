@@ -98,7 +98,7 @@ int32_t main(int32_t argc, char *argv[]) {
     printf("};\n\n");
     printf("#define GBK2UNICODE_TABLE_SIZE (sizeof(GBK2UNICODE_TABLE) / sizeof(uint16_t))\n\n");
     printf("#endif\n\n");
-#elif 1
+#elif 0
     uint32_t start = 0;
     uint32_t line = 0;
     printf("#ifndef __GBK2UNICODE_TABLE_H__\n");
@@ -128,14 +128,57 @@ int32_t main(int32_t argc, char *argv[]) {
     printf("#define GBK2UNICODE_TABLE_START 0x%04X\n\n", start);
     printf("#endif\n\n");
 #else
-    for (gbkc = 0; gbkc <= 0xffff; gbkc++) {
-        ret = gbk_mbtowc(NULL, &wc, &gbkc, sizeof(gbkc));
-        if (ret > 0) {
-            printf("0x%04X, 0x%04X\n", gbkc, wc);
-        } else {
-            printf("0x%04X, %d\n", gbkc, ret);
+#define GBKH_MIN 0x81
+#define GBKH_MAX 0xFE
+#define GBKL_MIN 0x40
+#define GBKL_MAX 0xFE
+// #define GBK2UNI_TABLE_SIZE merge_b16b((GBKH_MAX - GBKH_MIN + 1), (GBKL_MAX - GBKL_MIN + 1))
+#define GBK2UNI_TABLE_OFFSET ((GBKL_MAX - GBKL_MIN) + 2)
+#define GBK2UNI_TABLE_SIZE ((GBKH_MAX - GBKH_MIN) * (GBK2UNI_TABLE_OFFSET) + GBK2UNI_TABLE_OFFSET)
+    uint32_t line = 0;
+    uint32_t gbki = 0;
+    uint16_t GBK2UNI_TABLE[GBK2UNI_TABLE_SIZE] = {0};
+    memset(GBK2UNI_TABLE, 0xFF, sizeof(GBK2UNI_TABLE));
+
+    PRINT_DEBUG("GBK2UNI_TABLE_SIZE: %u", GBK2UNI_TABLE_SIZE);
+
+    for (gbkl = GBKL_MIN; gbkl <= GBKL_MAX; gbkl++) {
+        for (gbkh = GBKH_MIN; gbkh <= GBKH_MAX; gbkh++) {
+            gbkc = merge_b16b(gbkh, gbkl);
+            // gbki = merge_b16b((gbkh - GBKH_MIN), (gbkl - GBKL_MIN));
+            gbki = (gbkh - GBKH_MIN) * GBK2UNI_TABLE_OFFSET + (gbkl - GBKL_MIN);
+
+            if (GBK2UNI_TABLE[gbki] != 0xFFFF) {
+                PRINT_ERROR(
+                    "gbkh: 0x%02X, gbkl: 0x%02X, gbki: 0x%04X, gbkc: 0x%04X, wc: 0x%04X, table: 0x%04X conflict!!!",
+                    gbkh, gbkl, gbki, gbkc, wc, GBK2UNI_TABLE[gbki]);
+                return -1;
+            }
+
+            ret = gbk_mbtowc(NULL, &wc, &gbkc, sizeof(gbkc));
+            if (ret <= 0) {
+                wc = 0;
+            }
+            PRINT_DEBUG("gbkh: 0x%02X, gbkl: 0x%02X, gbki: 0x%04X, gbkc: 0x%04X, wc: 0x%04X", gbkh, gbkl, gbki, gbkc,
+                        wc);
+            GBK2UNI_TABLE[gbki] = wc;
         }
     }
+
+    printf("#ifndef __GBK2UNICODE_TABLE_H__\n");
+    printf("#define __GBK2UNICODE_TABLE_H__\n\n");
+    printf("static const uint16_t GBK2UNI_TABLE[] = {\n\t");
+    for (gbki = 0; gbki < GBK2UNI_TABLE_SIZE; gbki++) {
+        gbkc = GBK2UNI_TABLE[gbki];
+        gbkc = (((gbkc == 0xFFFF) || (gbkc == 0x0000)) ? 0x0001 : gbkc);
+        printf("0x%04X, ", gbkc);
+        if (((++line) % 16) == 0) {
+            printf("\n\t");
+        }
+    }
+    printf("};\n\n");
+    printf("#define GBK2UNI_TABLE_SIZE (sizeof(GBK2UNI_TABLE) / sizeof(uint16_t)) // %u\n", GBK2UNI_TABLE_SIZE);
+    printf("#endif\n\n");
 #endif
     return 0;
 }
